@@ -1,0 +1,20 @@
+# Secrets & Environment Configurations
+.env
+.env.*
+!.env.example
+
+# Runtime Logs, Backups & Session Cache
+audit.log
+backups/
+.jms_session_cache.json
+.jms_otp_challenge.json
+
+# Python Bytecode & Packaging
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
