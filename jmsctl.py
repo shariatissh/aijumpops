@@ -1460,6 +1460,131 @@ def cmd_asset_delete(asset_query: str, confirm: bool = False) -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
+# Asset Accounts / System Users Commands
+# -----------------------------------------------------------------------------
+
+
+def cmd_accounts_list(asset_query: str = "", limit: int = 200) -> Dict[str, Any]:
+    cfg = load_config()
+    client = JumpServerClient(cfg)
+    params: Dict[str, Any] = {}
+    norm_asset = None
+    if asset_query:
+        raw_asset = client.resolve_asset(asset_query)
+        norm_asset = client.normalize_asset(raw_asset)
+        params["asset"] = norm_asset["id"]
+
+    if client.is_v3_or_v4:
+        raw_accs = client.get_paginated("/api/v1/accounts/accounts/", params=params, limit=limit)
+        accounts = [
+            {
+                "id": str(a.get("id", "")),
+                "name": str(a.get("name") or ""),
+                "username": str(a.get("username") or ""),
+                "asset": {
+                    "id": a.get("asset", {}).get("id") if isinstance(a.get("asset"), dict) else a.get("asset"),
+                    "name": a.get("asset", {}).get("name") if isinstance(a.get("asset"), dict) else "",
+                },
+                "privileged": bool(a.get("privileged", False)),
+                "is_active": bool(a.get("is_active", True)),
+                "secret_type": a.get("secret_type", {}).get("value")
+                if isinstance(a.get("secret_type"), dict)
+                else a.get("secret_type", "password"),
+                "date_created": a.get("date_created", ""),
+            }
+            for a in raw_accs
+        ]
+    else:
+        raw_sys = client.get_paginated("/api/v1/assets/system-users/", limit=limit)
+        accounts = [
+            {
+                "id": str(s.get("id", "")),
+                "name": str(s.get("name") or ""),
+                "username": str(s.get("username") or s.get("name") or ""),
+                "protocol": str(s.get("protocol") or "ssh"),
+            }
+            for s in raw_sys
+        ]
+    return {"status": "OK", "count": len(accounts), "target_asset": norm_asset, "accounts": accounts}
+
+
+def cmd_account_create(
+    asset_query: str,
+    username: str,
+    name: str = "",
+    password: str = "",
+    secret_type: str = "password",
+    privileged: bool = False,
+    comment: str = "",
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Create a new system account on a server asset in JumpServer (PREVIEW_ONLY by default)."""
+    cfg = load_config()
+    client = JumpServerClient(cfg)
+    raw_asset = client.resolve_asset(asset_query)
+    norm_asset = client.normalize_asset(raw_asset)
+    aid = norm_asset["id"]
+
+    display_name = name or username
+    plan = {
+        "operation": "CREATE_ACCOUNT_ON_ASSET",
+        "asset": norm_asset,
+        "username": username,
+        "name": display_name,
+        "secret_type": secret_type,
+        "has_password": bool(password),
+        "privileged": privileged,
+        "comment": comment,
+    }
+
+    if not confirm:
+        return {
+            "status": "PREVIEW_ONLY",
+            "message": "Preview of account creation on asset. Confirm with user before running with --confirm.",
+            "plan": plan,
+        }
+
+    if client.is_v3_or_v4:
+        payload: Dict[str, Any] = {
+            "asset": aid,
+            "name": display_name,
+            "username": username,
+            "secret_type": secret_type,
+            "privileged": privileged,
+            "is_active": True,
+            "comment": comment,
+        }
+        if password:
+            payload["secret"] = password
+        created = client.request("POST", "/api/v1/accounts/accounts/", json_body=payload)
+        acc_info = {
+            "id": str(created.get("id", "")),
+            "name": str(created.get("name", display_name)),
+            "username": str(created.get("username", username)),
+            "asset": norm_asset,
+            "privileged": privileged,
+            "is_active": True,
+        }
+    else:
+        payload = {
+            "name": display_name,
+            "username": username,
+            "password": password,
+            "protocol": "ssh" if norm_asset.get("platform", "").lower() != "windows" else "rdp",
+        }
+        created = client.request("POST", "/api/v1/assets/system-users/", json_body=payload)
+        acc_info = {
+            "id": str(created.get("id", "")),
+            "name": str(created.get("name", display_name)),
+            "username": str(created.get("username", username)),
+            "asset": norm_asset,
+        }
+
+    write_audit_log("account_create", {"account": acc_info})
+    return {"status": "CREATED", "account": acc_info}
+
+
+# -----------------------------------------------------------------------------
 # Users & User Groups Commands
 # -----------------------------------------------------------------------------
 
@@ -1731,6 +1856,7 @@ def cmd_permission_grant(
     hours: Optional[int] = None,
     date_expired: str = "",
     comment: str = "",
+    replace_accounts: bool = False,
     confirm: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -1819,7 +1945,14 @@ def cmd_permission_grant(
         node_ids = list(
             dict.fromkeys(norm_existing["node_ids"] + ([str(resolved_node["id"])] if resolved_node else []))
         )
-        merged_accounts = list(dict.fromkeys(norm_existing["accounts"] + requested_accounts))
+        if replace_accounts:
+            final_accs = list(requested_accounts)
+            has_specific = any(not a.startswith("@") for a in final_accs)
+            if has_specific and "@SPEC" not in final_accs and "@ALL" not in final_accs:
+                final_accs.append("@SPEC")
+            target_accs = final_accs
+        else:
+            target_accs = list(dict.fromkeys(norm_existing["accounts"] + requested_accounts))
 
         patch_body: Dict[str, Any] = {
             "users": user_ids,
@@ -1828,7 +1961,7 @@ def cmd_permission_grant(
             "nodes": node_ids,
         }
         if client.is_v3_or_v4:
-            patch_body["accounts"] = merged_accounts
+            patch_body["accounts"] = target_accs
             patch_body["actions"] = resolved_actions
         if days or hours or date_expired:
             patch_body["date_expired"] = expiry_iso
@@ -2586,6 +2719,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_ad.add_argument("asset", help="Asset name, IP, or ID")
     p_ad.add_argument("--confirm", action="store_true", help="Confirm deletion")
 
+    # accounts (Asset Accounts / System Users)
+    p_accs = sub.add_parser("accounts", help="Manage system accounts on server assets")
+    accs_sub = p_accs.add_subparsers(dest="subcommand")
+
+    p_acl = accs_sub.add_parser("list", help="List system accounts on assets")
+    p_acl.add_argument("--asset", default="", help="Filter accounts by asset name, IP, or ID")
+    p_acl.add_argument("--limit", type=int, default=200)
+
+    p_acc = accs_sub.add_parser("create", help="Create a system account on an asset (PREVIEW_ONLY first)")
+    p_acc.add_argument("--asset", required=True, help="Target asset name, IP, or ID")
+    p_acc.add_argument("--username", required=True, help="System account username (e.g. pacs.support, root, ubuntu)")
+    p_acc.add_argument("--name", default="", help="Account display name")
+    p_acc.add_argument("--password", default="", help="Account password / secret")
+    p_acc.add_argument("--privileged", action="store_true", help="Mark as privileged account")
+    p_acc.add_argument("--comment", default="", help="Optional comment")
+    p_acc.add_argument("--confirm", action="store_true", help="Confirm execution")
+
     # nodes
     p_nodes = sub.add_parser("nodes", help="List JumpServer asset tree nodes")
     p_nodes.add_argument("--search", default="", help="Search query")
@@ -2659,6 +2809,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pg.add_argument("--hours", type=int, default=None, help="Temporary access duration in hours")
     p_pg.add_argument("--date-expired", default="", help="Explicit ISO expiration timestamp")
     p_pg.add_argument("--comment", default="", help="Rule comment")
+    p_pg.add_argument(
+        "--replace-accounts",
+        action="store_true",
+        help="Replace existing accounts in the rule instead of appending/merging",
+    )
     p_pg.add_argument("--confirm", action="store_true", help="Confirm execution")
 
     p_pr = perms_sub.add_parser("revoke", help="Revoke user/asset access or delete a permission rule (PREVIEW_ONLY first)")
@@ -2764,6 +2919,25 @@ def main(argv: Optional[List[str]] = None) -> int:
                 res = cmd_asset_delete(args.asset, confirm=args.confirm)
             else:
                 raise JumpServerError(f"Unknown assets subcommand: {sc}")
+        elif args.command == "accounts":
+            sc = args.subcommand or "list"
+            if sc == "list":
+                res = cmd_accounts_list(
+                    asset_query=getattr(args, "asset", ""),
+                    limit=getattr(args, "limit", 200),
+                )
+            elif sc == "create":
+                res = cmd_account_create(
+                    asset_query=args.asset,
+                    username=args.username,
+                    name=args.name,
+                    password=args.password,
+                    privileged=args.privileged,
+                    comment=args.comment,
+                    confirm=args.confirm,
+                )
+            else:
+                raise JumpServerError(f"Unknown accounts subcommand: {sc}")
         elif args.command == "users":
             sc = args.subcommand or "list"
             if sc == "list":
@@ -2817,6 +2991,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     hours=args.hours,
                     date_expired=args.date_expired,
                     comment=args.comment,
+                    replace_accounts=args.replace_accounts,
                     confirm=args.confirm,
                 )
             elif sc == "revoke":
