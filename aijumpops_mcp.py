@@ -127,6 +127,8 @@ TOOLS: List[Dict[str, Any]] = [
                 "username": {"type": "string", "default": "", "description": "New username (when action=create)"},
                 "name": {"type": "string", "default": "", "description": "New user display name (when action=create)"},
                 "email": {"type": "string", "default": "", "description": "New user email (when action=create)"},
+                "password": {"type": "string", "default": "", "description": "Initial password (when action=create)"},
+                "need_update_password": {"type": "boolean", "default": False, "description": "Require password change on first login"},
                 "confirm": {
                     "type": "boolean",
                     "default": False,
@@ -320,6 +322,8 @@ def dispatch_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             username=str(arguments.get("username", "")),
             name=str(arguments.get("name", "")),
             email=str(arguments.get("email", "")),
+            password=str(arguments.get("password", "")),
+            need_update_password=bool(arguments.get("need_update_password", False)),
             group=str(arguments.get("group", "")),
             confirm=bool(arguments.get("confirm", False)),
         )

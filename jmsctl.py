@@ -1295,14 +1295,20 @@ def cmd_asset_inspect(asset_query: str) -> Dict[str, Any]:
 
     accounts = client.list_accounts_for_asset(asset_id)
 
-    all_perms = [client.normalize_permission(p) for p in client.list_permissions_raw(limit=500)]
-    matching_perms = [
-        p
-        for p in all_perms
-        if asset_id in p["asset_ids"]
-        or asset_name in p["assets"]
-        or any(n in p["nodes"] for n in norm_asset["nodes"])
-    ]
+    try:
+        matching_raw = client.get_paginated(
+            "/api/v1/perms/asset-permissions/", params={"asset_id": asset_id}, limit=200
+        )
+        matching_perms = [client.normalize_permission(p) for p in matching_raw]
+    except Exception:
+        all_perms = [client.normalize_permission(p) for p in client.list_permissions_raw(limit=500)]
+        matching_perms = [
+            p
+            for p in all_perms
+            if asset_id in p["asset_ids"]
+            or asset_name in p["assets"]
+            or any(n in p["nodes"] for n in norm_asset["nodes"])
+        ]
 
     return {
         "status": "OK",
@@ -1494,6 +1500,8 @@ def cmd_user_action(
     username: str = "",
     name: str = "",
     email: str = "",
+    password: str = "",
+    need_update_password: bool = False,
     group: str = "",
     confirm: bool = False,
 ) -> Dict[str, Any]:
@@ -1509,15 +1517,18 @@ def cmd_user_action(
     action = action.lower().strip()
 
     if action == "create":
-        if not username or not email:
-            raise JumpServerError("Creating a user requires --username and --email.", code="MISSING_USER_FIELDS")
+        if not username:
+            raise JumpServerError("Creating a user requires --username.", code="MISSING_USER_FIELDS")
         display_name = name or username
+        user_email = email or f"{username}@example.com"
         target_group = client.resolve_user_group(group) if group else None
         plan = {
             "operation": "CREATE_USER",
             "username": username,
             "name": display_name,
-            "email": email,
+            "email": user_email,
+            "has_initial_password": bool(password),
+            "need_update_password_on_first_login": need_update_password,
             "group": {"id": target_group.get("id"), "name": target_group.get("name")} if target_group else None,
         }
         if not confirm:
@@ -1529,9 +1540,13 @@ def cmd_user_action(
         payload: Dict[str, Any] = {
             "username": username,
             "name": display_name,
-            "email": email,
+            "email": user_email,
             "is_active": True,
         }
+        if password:
+            payload["password"] = password
+        if need_update_password:
+            payload["need_update_password"] = True
         if target_group and target_group.get("id"):
             payload["groups"] = [target_group["id"]]
         created = client.request("POST", "/api/v1/users/users/", json_body=payload)
@@ -1544,15 +1559,21 @@ def cmd_user_action(
     uid = norm_user["id"]
 
     if action == "inspect":
-        all_perms = [client.normalize_permission(p) for p in client.list_permissions_raw(limit=500)]
-        matching_perms = [
-            p
-            for p in all_perms
-            if uid in p["user_ids"]
-            or norm_user["username"] in p["users"]
-            or norm_user["name"] in p["users"]
-            or any(g in p["user_groups"] for g in norm_user["groups"])
-        ]
+        try:
+            matching_raw = client.get_paginated(
+                "/api/v1/perms/asset-permissions/", params={"user_id": uid}, limit=200
+            )
+            matching_perms = [client.normalize_permission(p) for p in matching_raw]
+        except Exception:
+            all_perms = [client.normalize_permission(p) for p in client.list_permissions_raw(limit=500)]
+            matching_perms = [
+                p
+                for p in all_perms
+                if uid in p["user_ids"]
+                or norm_user["username"] in p["users"]
+                or norm_user["name"] in p["users"]
+                or any(g in p["user_groups"] for g in norm_user["groups"])
+            ]
         return {
             "status": "OK",
             "user": norm_user,
@@ -1639,22 +1660,33 @@ def cmd_check_access(user_query: str, asset_query: str) -> Dict[str, Any]:
     norm_user = client.normalize_user(raw_user)
     norm_asset = client.normalize_asset(raw_asset)
 
-    all_perms = [client.normalize_permission(p) for p in client.list_permissions_raw(limit=500)]
-    matching_rules: List[Dict[str, Any]] = []
-    for p in all_perms:
-        user_match = (
-            norm_user["id"] in p["user_ids"]
-            or norm_user["username"] in p["users"]
-            or norm_user["name"] in p["users"]
-            or any(g in p["user_groups"] for g in norm_user["groups"])
+    try:
+        perms_for_user = client.get_paginated(
+            "/api/v1/perms/asset-permissions/", params={"user_id": norm_user["id"]}, limit=200
         )
-        asset_match = (
-            norm_asset["id"] in p["asset_ids"]
-            or norm_asset["name"] in p["assets"]
-            or any(n in p["nodes"] for n in norm_asset["nodes"])
+        perms_for_asset = client.get_paginated(
+            "/api/v1/perms/asset-permissions/", params={"asset_id": norm_asset["id"]}, limit=200
         )
-        if user_match and asset_match:
-            matching_rules.append(p)
+        asset_perm_ids = {r["id"] for r in perms_for_asset}
+        matching_raw = [r for r in perms_for_user if r["id"] in asset_perm_ids]
+        matching_rules = [client.normalize_permission(p) for p in matching_raw]
+    except Exception:
+        all_perms = [client.normalize_permission(p) for p in client.list_permissions_raw(limit=500)]
+        matching_rules = []
+        for p in all_perms:
+            user_match = (
+                norm_user["id"] in p["user_ids"]
+                or norm_user["username"] in p["users"]
+                or norm_user["name"] in p["users"]
+                or any(g in p["user_groups"] for g in norm_user["groups"])
+            )
+            asset_match = (
+                norm_asset["id"] in p["asset_ids"]
+                or norm_asset["name"] in p["assets"]
+                or any(n in p["nodes"] for n in norm_asset["nodes"])
+            )
+            if user_match and asset_match:
+                matching_rules.append(p)
 
     active_rules = [r for r in matching_rules if r["is_active"] and not r["is_expired"]]
     effective_accounts = sorted({acc for r in active_rules for acc in r["accounts"]})
@@ -2586,8 +2618,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_uc = users_sub.add_parser("create", help="Create a new JumpServer user (PREVIEW_ONLY first)")
     p_uc.add_argument("--username", required=True)
-    p_uc.add_argument("--email", required=True)
-    p_uc.add_argument("--name", default="")
+    p_uc.add_argument("--email", default="", help="User email (default: <username>@example.com)")
+    p_uc.add_argument("--name", default="", help="User display name")
+    p_uc.add_argument("--password", default="", help="Initial password")
+    p_uc.add_argument(
+        "--need-update-password",
+        action="store_true",
+        help="Force user to change password on first login",
+    )
     p_uc.add_argument("--group", default="")
     p_uc.add_argument("--confirm", action="store_true")
 
@@ -2748,6 +2786,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     username=args.username,
                     email=args.email,
                     name=args.name,
+                    password=args.password,
+                    need_update_password=args.need_update_password,
                     group=args.group,
                     confirm=args.confirm,
                 )
