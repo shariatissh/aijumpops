@@ -118,7 +118,9 @@ def load_config(env_path: Path = DEFAULT_ENV_PATH) -> Dict[str, Any]:
     except ValueError:
         timeout = 30
 
-    jms_url = get_val("JMS_URL", "").rstrip("/")
+    jms_url_raw = get_val("JMS_URL", "").strip()
+    m_url = re.search(r"(https?://\S+)", jms_url_raw)
+    jms_url = (m_url.group(1) if m_url else jms_url_raw).rstrip("/")
     return {
         "jms_url": jms_url,
         "username": get_val("JMS_USERNAME", ""),
@@ -136,17 +138,21 @@ def load_config(env_path: Path = DEFAULT_ENV_PATH) -> Dict[str, Any]:
 
 
 def generate_totp(secret: str, interval: int = 30, digits: int = 6) -> str:
-    """Pure-Python RFC 6238 TOTP generator (zero external dependencies)."""
-    clean = re.sub(r"[^A-Za-z2-7]", "", secret).upper()
-    if not clean:
-        raise JumpServerError("Invalid Base32 TOTP secret.", code="INVALID_TOTP_SECRET")
+    """Pure-Python RFC 6238 TOTP generator (zero external dependencies).
+    If the caller passes a 6-digit numeric OTP directly, returns empty string so interactive OTP flow is used."""
+    stripped = secret.strip()
+    if stripped.isdigit():
+        return ""
+    clean = re.sub(r"[^A-Za-z2-7]", "", stripped).upper()
+    if len(clean) < 8:
+        return ""
     missing_padding = len(clean) % 8
     if missing_padding:
         clean += "=" * (8 - missing_padding)
     try:
         key = base64.b32decode(clean, casefold=True)
-    except Exception as exc:
-        raise JumpServerError(f"Failed to decode JMS_TOTP_SECRET as Base32: {exc}", code="INVALID_TOTP_SECRET")
+    except Exception:
+        return ""
 
     counter = int(time.time() // interval)
     msg = struct.pack(">Q", counter)
@@ -319,23 +325,56 @@ class JumpServerClient:
         if not otp_code:
             raise JumpServerError("OTP code cannot be empty.", code="MISSING_OTP_CODE")
 
+        challenge_url_from_state = ""
         if OTP_CHALLENGE_PATH.exists():
             try:
                 saved = json.loads(OTP_CHALLENGE_PATH.read_text(encoding="utf-8"))
                 if saved.get("cache_key") == self._cache_key():
                     for k, v in saved.get("cookies", {}).items():
                         self.session.cookies.set(k, v)
+                    resp_obj = saved.get("challenge", {}).get("response", {})
+                    if isinstance(resp_obj, dict) and isinstance(resp_obj.get("data"), dict):
+                        challenge_url_from_state = str(resp_obj["data"].get("url", ""))
             except Exception:
                 pass
 
-        # Try standard JumpServer API MFA verification endpoints (v3/v4 and v2)
+        # Always perform fresh step 1 authentication immediately before submitting OTP
+        # so the server-side MFA session state is guaranteed to be fresh and valid.
+        username = self.config.get("username", "")
+        password = self.config.get("password", "")
+        if username and password:
+            try:
+                self.session.cookies.clear()
+                r1 = self.session.post(
+                    f"{self.base_url}/api/v1/authentication/auth/",
+                    json={"username": username, "password": password},
+                    headers={"Accept": "application/json", "Content-Type": "application/json"},
+                    timeout=self.timeout,
+                )
+                if r1.status_code in (200, 201):
+                    d1 = r1.json()
+                    if isinstance(d1, dict) and d1.get("token"):
+                        self.token = d1["token"]
+                        self.keyword = d1.get("keyword", "Bearer")
+                        profile = self._probe_profile() or d1.get("user", {})
+                        self.current_user = profile
+                        self._detect_api_version()
+                        self._save_cached_session()
+                        return profile
+                    if isinstance(d1, dict) and isinstance(d1.get("data"), dict):
+                        challenge_url_from_state = str(d1["data"].get("url", ""))
+            except Exception:
+                pass
+
         endpoints = [
-            ("/api/v1/authentication/otp/verify/", {"code": otp_code, "type": mfa_type}),
-            ("/api/v1/authentication/mfa/select/", {"type": mfa_type, "code": otp_code}),
-            ("/api/v1/authentication/otp/", {"otp_code": otp_code, "code": otp_code, "type": mfa_type}),
-            ("/api/v1/authentication/tokens/", {"username": self.config.get("username", ""), "password": self.config.get("password", ""), "public_key": "", "code": otp_code, "otp_code": otp_code}),
-            ("/core/auth/login/otp/", {"otp_code": otp_code, "code": otp_code}),
+            ("/api/v1/authentication/mfa/challenge/", {"type": mfa_type, "code": otp_code}),
         ]
+        if (
+            challenge_url_from_state
+            and challenge_url_from_state.startswith("/")
+            and challenge_url_from_state != "/api/v1/authentication/mfa/challenge/"
+        ):
+            endpoints.insert(0, (challenge_url_from_state, {"type": mfa_type, "code": otp_code}))
 
         last_err = None
         for ep, payload in endpoints:
@@ -345,26 +384,51 @@ class JumpServerClient:
                 resp = self.session.post(url, json=payload, headers=headers, timeout=self.timeout)
                 if resp.status_code in (200, 201):
                     data = resp.json() if resp.text else {}
-                    if isinstance(data, dict) and (data.get("token") or data.get("user") or data.get("ok") or self.session.cookies.get("jms_sessionid") or self.session.cookies.get("sessionid")):
-                        if data.get("token"):
-                            self.token = data["token"]
-                            self.keyword = data.get("keyword", "Bearer")
-                        if isinstance(data.get("user"), dict):
-                            self.current_user = data["user"]
-                        # Verify profile
-                        profile = self._probe_profile()
-                        if profile:
-                            self.current_user = profile
-                            self._detect_api_version()
-                            self._save_cached_session()
-                            if OTP_CHALLENGE_PATH.exists():
-                                OTP_CHALLENGE_PATH.unlink(missing_ok=True)
-                            return profile
+                    if isinstance(data, dict) and data.get("token"):
+                        self.token = data["token"]
+                        self.keyword = data.get("keyword", "Bearer")
+                    if isinstance(data, dict) and data.get("msg") == "ok" and not data.get("token"):
+                        # JumpServer v3/v4 two-step auth flow: after /mfa/challenge/ returns {"msg": "ok"},
+                        # call GET or POST /api/v1/authentication/auth/ (or /tokens/) to finalize token/session
+                        for fin_method, fin_ep in (
+                            ("POST", "/api/v1/authentication/auth/"),
+                            ("GET", "/api/v1/authentication/auth/"),
+                            ("POST", "/api/v1/authentication/tokens/"),
+                        ):
+                            try:
+                                fin_resp = self.session.request(
+                                    fin_method,
+                                    f"{self.base_url}{fin_ep}",
+                                    headers=self._build_headers(fin_method, fin_ep),
+                                    timeout=self.timeout,
+                                )
+                                if fin_resp.status_code in (200, 201):
+                                    fin_data = fin_resp.json() if fin_resp.text else {}
+                                    if isinstance(fin_data, dict) and fin_data.get("token"):
+                                        self.token = fin_data["token"]
+                                        self.keyword = fin_data.get("keyword", "Bearer")
+                                    if isinstance(fin_data, dict) and isinstance(fin_data.get("user"), dict):
+                                        self.current_user = fin_data["user"]
+                                    break
+                            except Exception:
+                                pass
+                    # Verify profile (or fall back to data["user"] if returned directly by challenge)
+                    profile = self._probe_profile() or (data.get("user") if isinstance(data, dict) else None)
+                    if profile:
+                        self.current_user = profile
+                        self._detect_api_version()
+                        self._save_cached_session()
+                        if OTP_CHALLENGE_PATH.exists():
+                            OTP_CHALLENGE_PATH.unlink(missing_ok=True)
+                        return profile
+                    last_err = data
                 else:
                     try:
                         last_err = resp.json()
                     except Exception:
                         last_err = resp.text[:300]
+                    if isinstance(last_err, dict) and last_err.get("error") == "mfa_failed":
+                        break
             except Exception as exc:
                 last_err = str(exc)
 
@@ -422,11 +486,7 @@ class JumpServerClient:
     def authenticate(self, force_refresh: bool = False, manual_otp: Optional[str] = None) -> Dict[str, Any]:
         """Authenticate with JumpServer using cached session, Private Token, AccessKey, or Username/Password + TOTP."""
         if manual_otp:
-            # If user passed --otp directly, perform login step 1 if needed, then verify OTP
-            try:
-                return self.complete_otp_challenge(manual_otp)
-            except JumpServerError:
-                pass
+            return self.complete_otp_challenge(manual_otp)
 
         if not force_refresh and self._load_cached_session():
             profile = self._probe_profile()
