@@ -5,6 +5,7 @@
 
 # Runtime Logs, Backups & Session Cache
 audit.log
+watch_*.log
 backups/
 .jms_session_cache.json
 .jms_otp_challenge.json

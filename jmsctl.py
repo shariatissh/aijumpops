@@ -1876,10 +1876,19 @@ def cmd_permission_grant(
     client = JumpServerClient(cfg)
     client.authenticate()
 
-    if not user_query and not user_group_query:
-        raise JumpServerError("Specify at least --user or --user-group.", code="MISSING_PRINCIPAL")
-    if not asset_query and not node_query:
-        raise JumpServerError("Specify at least --asset or --node.", code="MISSING_TARGET")
+    existing_rule = None
+    if rule_name:
+        try:
+            existing_rule = client.resolve_permission(rule_name)
+        except JumpServerError as exc:
+            if exc.code != "PERMISSION_NOT_FOUND":
+                raise
+
+    if not existing_rule:
+        if not user_query and not user_group_query:
+            raise JumpServerError("Specify at least --user or --user-group.", code="MISSING_PRINCIPAL")
+        if not asset_query and not node_query:
+            raise JumpServerError("Specify at least --asset or --node.", code="MISSING_TARGET")
 
     resolved_user = client.normalize_user(client.resolve_user(user_query)) if user_query else None
     resolved_group = client.resolve_user_group(user_group_query) if user_group_query else None
@@ -1889,6 +1898,15 @@ def cmd_permission_grant(
     available_accounts: List[Dict[str, Any]] = []
     if resolved_asset:
         available_accounts = client.list_accounts_for_asset(resolved_asset["id"])
+    elif existing_rule:
+        try:
+            detail = client.request("GET", f"/api/v1/perms/asset-permissions/{existing_rule['id']}/")
+            for a_item in (detail.get("assets") or []):
+                aid = a_item.get("id") if isinstance(a_item, dict) else a_item
+                if aid:
+                    available_accounts.extend(client.list_accounts_for_asset(str(aid)))
+        except Exception:
+            pass
 
     requested_accounts = [a.strip() for a in accounts.split(",") if a.strip()] if accounts else ["@ALL"]
     actions_key = actions.strip().lower()
@@ -1896,14 +1914,6 @@ def cmd_permission_grant(
         actions_key, [a.strip().lower() for a in actions.split(",") if a.strip()]
     )
     expiry_iso = _compute_expiry_iso(days=days, hours=hours, date_expired=date_expired)
-
-    existing_rule = None
-    if rule_name:
-        try:
-            existing_rule = client.resolve_permission(rule_name)
-        except JumpServerError as exc:
-            if exc.code != "PERMISSION_NOT_FOUND":
-                raise
 
     auto_rule_name = rule_name
     if not auto_rule_name:
@@ -1945,7 +1955,11 @@ def cmd_permission_grant(
     # Build payload for existing rule update or new rule creation
     if existing_rule:
         rule_id = str(existing_rule["id"])
-        norm_existing = client.normalize_permission(existing_rule)
+        try:
+            detail = client.request("GET", f"/api/v1/perms/asset-permissions/{rule_id}/")
+            norm_existing = client.normalize_permission(detail)
+        except Exception:
+            norm_existing = client.normalize_permission(existing_rule)
         user_ids = list(dict.fromkeys(norm_existing["user_ids"] + ([resolved_user["id"]] if resolved_user else [])))
         group_ids = list(
             dict.fromkeys(norm_existing["user_group_ids"] + ([str(resolved_group["id"])] if resolved_group else []))
