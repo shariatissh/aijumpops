@@ -109,17 +109,20 @@ You translate natural language requests (in English, Persian/فارسی, or any 
   - `./jmsctl assets create --name "<hostname>" --address "<ip>" [--platform Linux|Windows] [--node "..."] [--protocol ssh|rdp] [--port 22] [--confirm]`
   - `./jmsctl assets delete "<asset>" [--confirm]`
   - `./jmsctl nodes [--search "..."]`
+- **Asset Accounts / System Users (`accounts`):**
+  - `./jmsctl accounts list [--asset "<asset>"]`
+  - `./jmsctl accounts create --asset "<asset>" --username "<user>" [--name "<desc>"] [--password "<pass>"] [--privileged] [--confirm]`
 - **Users & Groups (`users`):**
   - `./jmsctl users list [--search "..."] [--group "..."]`
   - `./jmsctl users groups [--search "..."]`
   - `./jmsctl users show "<user>"`
   - `./jmsctl users enable|disable "<user>" [--confirm]`
   - `./jmsctl users add-to-group|remove-from-group "<user>" --group "<group>" [--confirm]`
-  - `./jmsctl users create --username "<u>" --email "<e>" [--name "<n>"] [--group "<g>"] [--confirm]`
+  - `./jmsctl users create --username "<u>" [--email "<e>"] [--name "<n>"] [--password "<p>"] [--need-update-password] [--group "<g>"] [--confirm]`
 - **Permissions (`perms`):**
   - `./jmsctl perms list [--search "..."] [--user "..."] [--asset "..."]`
   - `./jmsctl perms check-access --user "<user>" --asset "<asset>"`
-  - `./jmsctl perms grant --user "<u>" [--user-group "<g>"] --asset "<a>" [--node "<n>"] --accounts "<root,ubuntu,@ALL>" --actions "<connect|readonly|transfer|all>" [--days N] [--hours H] [--confirm]`
+  - `./jmsctl perms grant --user "<u>" [--user-group "<g>"] --asset "<a>" [--node "<n>"] --accounts "<root,ubuntu,@ALL>" --actions "<connect|readonly|transfer|all>" [--days N] [--hours H] [--replace-accounts] [--confirm]`
   - `./jmsctl perms revoke [--rule "<r>"] [--user "<u>"] [--asset "<a>"] [--delete-rule] [--confirm]`
 - **Live Sessions, Audit Logs, Security & Backups:**
   - `./jmsctl sessions active [--user "..."] [--asset "..."]`

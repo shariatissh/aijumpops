@@ -80,6 +80,38 @@ TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "jms_accounts_list",
+        "description": "List system accounts defined on server assets (e.g. root, ubuntu, administrator, pacs.support).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "asset": {"type": "string", "default": "", "description": "Optional asset name, IP, or ID filter"},
+                "limit": {"type": "integer", "default": 200},
+            },
+        },
+    },
+    {
+        "name": "jms_account_create",
+        "description": "Create a new system account on a server asset in JumpServer. Always call with confirm=false first to preview!",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "asset": {"type": "string", "description": "Target asset name, IP, or ID"},
+                "username": {"type": "string", "description": "Account username (e.g. pacs.support, root, ubuntu)"},
+                "name": {"type": "string", "default": "", "description": "Account display name"},
+                "password": {"type": "string", "default": "", "description": "Account password / secret"},
+                "privileged": {"type": "boolean", "default": False, "description": "Mark account as privileged"},
+                "comment": {"type": "string", "default": ""},
+                "confirm": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Set to true ONLY after explicit user confirmation.",
+                },
+            },
+            "required": ["asset", "username"],
+        },
+    },
+    {
         "name": "jms_nodes_list",
         "description": "List JumpServer asset tree nodes (e.g. /Default/Production, /Default/Staging) and asset counts.",
         "inputSchema": {
@@ -186,6 +218,11 @@ TOOLS: List[Dict[str, Any]] = [
                 "days": {"type": "integer", "description": "Optional temporary access duration in days"},
                 "hours": {"type": "integer", "description": "Optional temporary access duration in hours"},
                 "comment": {"type": "string", "default": ""},
+                "replace_accounts": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Replace existing accounts in the rule instead of appending/merging",
+                },
                 "confirm": {
                     "type": "boolean",
                     "default": False,
@@ -305,6 +342,21 @@ def dispatch_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             comment=str(arguments.get("comment", "")),
             confirm=bool(arguments.get("confirm", False)),
         )
+    if name == "jms_accounts_list":
+        return jmsctl.cmd_accounts_list(
+            asset_query=str(arguments.get("asset", "")),
+            limit=int(arguments.get("limit", 200)),
+        )
+    if name == "jms_account_create":
+        return jmsctl.cmd_account_create(
+            asset_query=str(arguments["asset"]),
+            username=str(arguments["username"]),
+            name=str(arguments.get("name", "")),
+            password=str(arguments.get("password", "")),
+            privileged=bool(arguments.get("privileged", False)),
+            comment=str(arguments.get("comment", "")),
+            confirm=bool(arguments.get("confirm", False)),
+        )
     if name == "jms_nodes_list":
         return jmsctl.cmd_nodes_list(search=str(arguments.get("search", "")))
     if name == "jms_users_list":
@@ -351,6 +403,7 @@ def dispatch_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             days=arguments.get("days"),
             hours=arguments.get("hours"),
             comment=str(arguments.get("comment", "")),
+            replace_accounts=bool(arguments.get("replace_accounts", False)),
             confirm=bool(arguments.get("confirm", False)),
         )
     if name == "jms_permission_revoke":

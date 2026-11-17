@@ -94,10 +94,11 @@ pip install -e .
 ./install.sh
 ```
 
-#### 2. Model Context Protocol (MCP) — 17 Built-in Tools
-`aijumpops_mcp.py` is a zero-dependency **stdio JSON-RPC 2.0 MCP Server** exposing **17 tools**:
+#### 2. Model Context Protocol (MCP) — 20 Built-in Tools
+`aijumpops_mcp.py` is a zero-dependency **stdio JSON-RPC 2.0 MCP Server** exposing **20 tools**:
 - `jms_overview`, `jms_auth_otp`
 - `jms_assets_list`, `jms_asset_inspect`, `jms_asset_create`, `jms_nodes_list`
+- `jms_accounts_list`, `jms_account_create`
 - `jms_users_list`, `jms_user_groups_list`, `jms_user_action`
 - `jms_permissions_list`, `jms_check_access`, `jms_permission_grant`, `jms_permission_revoke`
 - `jms_sessions_active`, `jms_audit_logs`, `jms_security_audit`
@@ -145,15 +146,17 @@ pip install -e .
 | | `./jmsctl assets create --name "<n>" --address "<ip>" [--platform Linux] [--node "..."] [--protocol ssh] [--port 22] [--confirm]` | Register a new server asset (`PREVIEW_ONLY` first) |
 | | `./jmsctl assets delete "<asset>" [--confirm]` | Delete an asset (`PREVIEW_ONLY` first) |
 | | `./jmsctl nodes [--search "..."]` | List asset tree nodes |
+| **Asset Accounts** | `./jmsctl accounts list [--asset "<asset>"]` | List system accounts defined on assets (root, ubuntu, pacs.support, etc.) |
+| | `./jmsctl accounts create --asset "<asset>" --username "<user>" [--name "<name>"] [--password "<pass>"] [--privileged] [--confirm]` | Create a system account on an asset (`PREVIEW_ONLY` first) |
 | **Users & Groups** | `./jmsctl users list [--search "..."] [--group "..."]` | List users with role, groups, active status, and 2FA/MFA state |
 | | `./jmsctl users groups [--search "..."]` | List user groups and member counts |
 | | `./jmsctl users show "<user>"` | Inspect user details and all permission rules affecting them |
 | | `./jmsctl users enable\|disable "<user>" [--confirm]` | Enable or disable a user account (`PREVIEW_ONLY` first) |
 | | `./jmsctl users add-to-group\|remove-from-group "<user>" --group "<g>" [--confirm]` | Add or remove user from a User Group (`PREVIEW_ONLY` first) |
-| | `./jmsctl users create --username "<u>" --email "<e>" [--name "<n>"] [--group "<g>"] [--confirm]` | Create a new user (`PREVIEW_ONLY` first) |
+| | `./jmsctl users create --username "<u>" [--email "<e>"] [--name "<n>"] [--password "<p>"] [--need-update-password] [--group "<g>"] [--confirm]` | Create a new user with password & force change on 1st login (`PREVIEW_ONLY` first) |
 | **Permissions** | `./jmsctl perms list [--search "..."] [--user "<u>"] [--asset "<a>"]` | List `AssetPermission` authorization rules |
 | | `./jmsctl perms check-access --user "<u>" --asset "<a>"` | Verify whether a user has access to an asset and via which accounts/rules |
-| | `./jmsctl perms grant --user "<u>" --asset "<a>" --accounts "<root,ubuntu,@ALL>" --actions "<connect\|readonly\|transfer\|all>" [--days N] [--hours H] [--confirm]` | Grant permanent or temporary access (`PREVIEW_ONLY` first) |
+| | `./jmsctl perms grant --user "<u>" --asset "<a>" --accounts "<root,ubuntu,@ALL>" --actions "<connect\|readonly\|transfer\|all>" [--days N] [--hours H] [--replace-accounts] [--confirm]` | Grant permanent or temporary access (`PREVIEW_ONLY` first) |
 | | `./jmsctl perms revoke [--rule "<r>"] [--user "<u>"] [--asset "<a>"] [--delete-rule] [--confirm]` | Revoke access or delete a permission rule (`PREVIEW_ONLY` first) |
 | **Sessions & Audit** | `./jmsctl sessions active [--user "<u>"] [--asset "<a>"]` | List currently active live SSH/RDP terminal sessions |
 | | `./jmsctl sessions terminate "<session_id>" [--confirm]` | Kill/terminate a live terminal session (`PREVIEW_ONLY` first) |

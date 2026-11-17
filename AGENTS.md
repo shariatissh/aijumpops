@@ -94,18 +94,22 @@ All `./jmsctl` outputs are structured JSON:
 - `./jmsctl assets delete "<asset>" [--confirm]`
 - `./jmsctl nodes [--search "..."]` : List asset tree nodes
 
+### Asset Accounts / System Users (`accounts`) / مدیریت اکانت‌های سیستم روی سرورها
+- `./jmsctl accounts list [--asset "<asset>"]` : List system accounts (e.g. root, ubuntu, administrator, pacs.support)
+- `./jmsctl accounts create --asset "<asset>" --username "<username>" [--name "<name>"] [--password "<password>"] [--privileged] [--confirm]`
+
 ### User & Group Management (`users`) / مدیریت کاربران و گروه‌ها
 - `./jmsctl users list [--search "..."] [--group "..."]` : List users with role, groups, active state, and MFA status
 - `./jmsctl users groups [--search "..."]` : List user groups
 - `./jmsctl users show "<user>"` : Inspect user details and all permission rules granting them access
 - `./jmsctl users enable|disable "<user>" [--confirm]` : Enable or disable a user account
 - `./jmsctl users add-to-group|remove-from-group "<user>" --group "<group>" [--confirm]`
-- `./jmsctl users create --username "<u>" --email "<e>" [--name "<n>"] [--group "<g>"] [--confirm]`
+- `./jmsctl users create --username "<u>" [--email "<e>"] [--name "<n>"] [--password "<p>"] [--need-update-password] [--group "<g>"] [--confirm]`
 
 ### Permissions & Access Control (`perms`) / مدیریت مجوزها و دسترسی‌ها
 - `./jmsctl perms list [--search "..."] [--user "..."] [--asset "..."]` : List AssetPermission rules
 - `./jmsctl perms check-access --user "<user>" --asset "<asset>"` : Check if user has access to asset and with which accounts/actions
-- `./jmsctl perms grant --user "<u>" [--user-group "<g>"] --asset "<a>" [--node "<n>"] --accounts "<root,ubuntu,@ALL>" --actions "<connect|readonly|transfer|all>" [--days N] [--hours H] [--confirm]`
+- `./jmsctl perms grant --user "<u>" [--user-group "<g>"] --asset "<a>" [--node "<n>"] --accounts "<root,ubuntu,@ALL>" --actions "<connect|readonly|transfer|all>" [--days N] [--hours H] [--replace-accounts] [--confirm]`
 - `./jmsctl perms revoke [--rule "<r>"] [--user "<u>"] [--asset "<a>"] [--delete-rule] [--confirm]`
 
 ### Live Sessions, Audit Logs & AI Security Auditor (`sessions`, `logs`, `security-audit`)

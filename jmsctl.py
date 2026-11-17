@@ -859,17 +859,26 @@ class JumpServerClient:
         elif isinstance(actions_raw, (int, str)):
             actions = [str(actions_raw)]
 
+        users_amount = raw.get("users_amount", len(_extract_ids(raw.get("users"))))
+        user_groups_amount = raw.get("user_groups_amount", len(_extract_ids(raw.get("user_groups"))))
+        assets_amount = raw.get("assets_amount", len(_extract_ids(raw.get("assets"))))
+        nodes_amount = raw.get("nodes_amount", len(_extract_ids(raw.get("nodes"))))
+
         return {
             "id": str(raw.get("id", "")),
             "name": str(raw.get("name") or ""),
             "users": _extract_names(raw.get("users"), raw.get("users_display")),
             "user_ids": _extract_ids(raw.get("users")),
+            "users_amount": users_amount,
             "user_groups": _extract_names(raw.get("user_groups"), raw.get("user_groups_display")),
             "user_group_ids": _extract_ids(raw.get("user_groups")),
+            "user_groups_amount": user_groups_amount,
             "assets": _extract_names(raw.get("assets"), raw.get("assets_display")),
             "asset_ids": _extract_ids(raw.get("assets")),
+            "assets_amount": assets_amount,
             "nodes": _extract_names(raw.get("nodes"), raw.get("nodes_display")),
             "node_ids": _extract_ids(raw.get("nodes")),
+            "nodes_amount": nodes_amount,
             "accounts": accounts,
             "actions": actions or ["connect"],
             "is_active": bool(raw.get("is_active", True)),
@@ -2399,7 +2408,13 @@ def cmd_security_audit() -> Dict[str, Any]:
                 }
             )
 
-        if not p["users"] and not p["user_groups"]:
+        has_any_principals = (
+            p.get("users_amount", 0) > 0
+            or p.get("user_groups_amount", 0) > 0
+            or bool(p["users"])
+            or bool(p["user_groups"])
+        )
+        if not has_any_principals:
             findings.append(
                 {
                     "severity": "LOW",
@@ -2411,7 +2426,10 @@ def cmd_security_audit() -> Dict[str, Any]:
             )
 
     # 3. Unassigned / Orphaned Assets
-    if not covered_nodes:
+    has_global_nodes_covered = any(
+        (p.get("nodes_amount", 0) > 0 or bool(p["nodes"])) for p in perms if p["is_active"] and not p["is_expired"]
+    )
+    if not has_global_nodes_covered and not covered_nodes:
         for a in assets:
             if a["is_active"] and a["id"] not in covered_asset_ids:
                 findings.append(
