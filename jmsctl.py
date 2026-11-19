@@ -1892,12 +1892,18 @@ def cmd_permission_grant(
 
     resolved_user = client.normalize_user(client.resolve_user(user_query)) if user_query else None
     resolved_group = client.resolve_user_group(user_group_query) if user_group_query else None
-    resolved_asset = client.normalize_asset(client.resolve_asset(asset_query)) if asset_query else None
+    resolved_assets: List[Dict[str, Any]] = []
+    if asset_query:
+        for aq in asset_query.split(","):
+            if aq.strip():
+                resolved_assets.append(client.normalize_asset(client.resolve_asset(aq.strip())))
+    resolved_asset = resolved_assets[0] if len(resolved_assets) == 1 else None
     resolved_node = client.resolve_node(node_query) if node_query else None
 
     available_accounts: List[Dict[str, Any]] = []
-    if resolved_asset:
-        available_accounts = client.list_accounts_for_asset(resolved_asset["id"])
+    if resolved_assets:
+        for a in resolved_assets:
+            available_accounts.extend(client.list_accounts_for_asset(a["id"]))
     elif existing_rule:
         try:
             detail = client.request("GET", f"/api/v1/perms/asset-permissions/{existing_rule['id']}/")
@@ -1918,7 +1924,15 @@ def cmd_permission_grant(
     auto_rule_name = rule_name
     if not auto_rule_name:
         who = resolved_user["username"] if resolved_user else str(resolved_group.get("name"))
-        where = resolved_asset["name"] if resolved_asset else str(resolved_node.get("value"))
+        where = (
+            resolved_asset["name"]
+            if resolved_asset
+            else (
+                ", ".join(a["name"] for a in resolved_assets)
+                if resolved_assets
+                else str(resolved_node.get("value"))
+            )
+        )
         auto_rule_name = f"perm-{who}-{where}"
 
     plan = {
@@ -1927,7 +1941,7 @@ def cmd_permission_grant(
         "existing_rule_id": existing_rule.get("id") if existing_rule else None,
         "user": resolved_user,
         "user_group": {"id": resolved_group.get("id"), "name": resolved_group.get("name")} if resolved_group else None,
-        "asset": resolved_asset,
+        "asset": resolved_asset or resolved_assets,
         "node": {
             "id": resolved_node.get("id"),
             "full_value": resolved_node.get("full_value") or resolved_node.get("value"),
@@ -1964,7 +1978,16 @@ def cmd_permission_grant(
         group_ids = list(
             dict.fromkeys(norm_existing["user_group_ids"] + ([str(resolved_group["id"])] if resolved_group else []))
         )
-        asset_ids = list(dict.fromkeys(norm_existing["asset_ids"] + ([resolved_asset["id"]] if resolved_asset else [])))
+        asset_ids = list(
+            dict.fromkeys(
+                norm_existing["asset_ids"]
+                + (
+                    [a["id"] for a in resolved_assets]
+                    if resolved_assets
+                    else ([resolved_asset["id"]] if resolved_asset else [])
+                )
+            )
+        )
         node_ids = list(
             dict.fromkeys(norm_existing["node_ids"] + ([str(resolved_node["id"])] if resolved_node else []))
         )
@@ -1999,7 +2022,9 @@ def cmd_permission_grant(
         "name": auto_rule_name,
         "users": [resolved_user["id"]] if resolved_user else [],
         "user_groups": [str(resolved_group["id"])] if resolved_group else [],
-        "assets": [resolved_asset["id"]] if resolved_asset else [],
+        "assets": [a["id"] for a in resolved_assets]
+        if resolved_assets
+        else ([resolved_asset["id"]] if resolved_asset else []),
         "nodes": [str(resolved_node["id"])] if resolved_node else [],
         "is_active": True,
         "date_expired": expiry_iso,
