@@ -1637,6 +1637,7 @@ def cmd_user_action(
     password: str = "",
     need_update_password: bool = False,
     group: str = "",
+    roles: str = "",
     confirm: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -1656,11 +1657,42 @@ def cmd_user_action(
         display_name = name or username
         user_email = email or f"{username}@example.com"
         target_group = client.resolve_user_group(group) if group else None
+
+        resolved_role_ids: List[str] = []
+        if roles and client.is_v3_or_v4:
+            try:
+                role_aliases = {
+                    "admin": "systemadmin",
+                    "administrator": "systemadmin",
+                    "auditor": "systemauditor",
+                    "audit": "systemauditor",
+                    "operator": "systemuser",
+                    "user": "systemuser",
+                }
+                all_sys_roles = client.request("GET", "/api/v1/rbac/system-roles/")
+                for r_str in roles.split(","):
+                    rc = r_str.strip().lower()
+                    target_name = role_aliases.get(rc, rc)
+                    for sr in all_sys_roles:
+                        sr_id = sr.get("id", "").lower()
+                        sr_name = sr.get("name", "").lower()
+                        if (
+                            sr_id == rc
+                            or sr_name == target_name
+                            or sr_name == rc
+                            or target_name in sr_name
+                        ):
+                            resolved_role_ids.append(sr["id"])
+            except Exception:
+                pass
+
         plan = {
             "operation": "CREATE_USER",
             "username": username,
             "name": display_name,
             "email": user_email,
+            "roles": roles if roles else "Default (System Operator)",
+            "resolved_role_ids": resolved_role_ids,
             "has_initial_password": bool(password),
             "need_update_password_on_first_login": need_update_password,
             "group": {"id": target_group.get("id"), "name": target_group.get("name")} if target_group else None,
@@ -1681,6 +1713,8 @@ def cmd_user_action(
             payload["password"] = password
         if need_update_password:
             payload["need_update_password"] = True
+        if resolved_role_ids:
+            payload["system_roles"] = list(dict.fromkeys(resolved_role_ids))
         if target_group and target_group.get("id"):
             payload["groups"] = [target_group["id"]]
         created = client.request("POST", "/api/v1/users/users/", json_body=payload)
@@ -2834,6 +2868,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Force user to change password on first login",
     )
     p_uc.add_argument("--group", default="")
+    p_uc.add_argument("--roles", default="", help="Comma-separated system roles (e.g. auditor,operator)")
     p_uc.add_argument("--confirm", action="store_true")
 
     # perms (Asset Permissions / Authorization Rules)
@@ -3020,6 +3055,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     password=args.password,
                     need_update_password=args.need_update_password,
                     group=args.group,
+                    roles=args.roles,
                     confirm=args.confirm,
                 )
             else:
