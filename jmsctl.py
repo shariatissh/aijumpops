@@ -1948,11 +1948,31 @@ def cmd_permission_grant(
         except Exception:
             pass
 
-    requested_accounts = [a.strip() for a in accounts.split(",") if a.strip()] if accounts else ["@ALL"]
-    actions_key = actions.strip().lower()
-    resolved_actions = ACTION_ALIASES_V3.get(
-        actions_key, [a.strip().lower() for a in actions.split(",") if a.strip()]
-    )
+    norm_existing: Optional[Dict[str, Any]] = None
+    if existing_rule:
+        try:
+            detail = client.request("GET", f"/api/v1/perms/asset-permissions/{existing_rule['id']}/")
+            norm_existing = client.normalize_permission(detail)
+        except Exception:
+            norm_existing = client.normalize_permission(existing_rule)
+
+    if accounts:
+        requested_accounts = [a.strip() for a in accounts.split(",") if a.strip()]
+    elif norm_existing and norm_existing.get("accounts"):
+        requested_accounts = norm_existing["accounts"]
+    else:
+        requested_accounts = ["@ALL"]
+
+    if actions:
+        actions_key = actions.strip().lower()
+        resolved_actions = ACTION_ALIASES_V3.get(
+            actions_key, [a.strip().lower() for a in actions.split(",") if a.strip()]
+        )
+    elif norm_existing and norm_existing.get("actions"):
+        resolved_actions = norm_existing["actions"]
+    else:
+        resolved_actions = ["connect"]
+
     expiry_iso = _compute_expiry_iso(days=days, hours=hours, date_expired=date_expired)
 
     auto_rule_name = rule_name
@@ -2890,11 +2910,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pg.add_argument("--user-group", default="", help="User Group name or ID")
     p_pg.add_argument("--asset", default="", help="Asset name, IP, or ID")
     p_pg.add_argument("--node", default="", help="Asset Node name or ID")
-    p_pg.add_argument("--accounts", default="@ALL", help="Comma-separated account names (e.g. root,ubuntu,@ALL)")
+    p_pg.add_argument("--accounts", default="", help="Comma-separated account names (e.g. root,ubuntu,@ALL)")
     p_pg.add_argument(
         "--actions",
-        default="connect",
-        help="Allowed actions: connect, readonly, transfer, all, or comma-separated (connect,upload,download,copy,paste)",
+        default="",
+        help="Allowed actions: connect, readonly, transfer, clipboard, all, or comma-separated (connect,upload,download,copy,paste)",
     )
     p_pg.add_argument("--rule-name", default="", help="Optional existing or custom permission rule name")
     p_pg.add_argument("--days", type=int, default=None, help="Temporary access duration in days")
